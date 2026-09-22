@@ -1,0 +1,27 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python caches and test/tool state
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local configuration and generated credentials
+.env
+.env.*
+!.env.example
+env.local
+*.env.local
+.jwt_secret
+.jwt_secret.*
+.current_jwt
+.current_jwt.*
+
+# Logs
+logs/
+*.log
+
+.DS_Store

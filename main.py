@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 import config
 from cars_driver import CarsDriver
 from idempotency import idempotency_scope, idempotency_store
+from member_redaction import MemberQueryScrubber, install_log_filter
 from schemas import (
     AvailableCarsResponse,
     BookingCreateRequest,
@@ -23,10 +24,18 @@ from schemas import (
     HealthResponse,
     MinuteDatetime,
 )
-from security import APIException, CarCredentials, get_car_credentials, verify_bearer_token
+from security import (
+    APIException,
+    CarCredentials,
+    CredentialRequest,
+    get_car_credentials,
+    get_credential_request,
+    verify_bearer_token,
+)
 
 
 logger = logging.getLogger("maaganm_cars.api")
+install_log_filter()
 cars_driver = CarsDriver()
 
 
@@ -39,12 +48,12 @@ async def lifespan(_: FastAPI):
 
 
 _ERROR_RESPONSES = {
-    400: {"model": ErrorResponse, "description": "Invalid request input."},
+    400: {"model": ErrorResponse, "description": "Invalid request input, including a malformed member ID."},
     401: {"model": ErrorResponse, "description": "Authentication or account credentials failed."},
     404: {"model": ErrorResponse, "description": "The requested booking was not found."},
     409: {"model": ErrorResponse, "description": "Request conflict or historical tariff unavailable."},
     502: {"model": ErrorResponse, "description": "The upstream booking service failed safely."},
-    503: {"model": ErrorResponse, "description": "The selected account has no local Cars code configured."},
+    503: {"model": ErrorResponse, "description": "The selected account has no local Cars code configured, or member sessions are at capacity."},
 }
 
 app = FastAPI(
@@ -53,7 +62,10 @@ app = FastAPI(
     description=(
         "A local authenticated API for reading and managing Maagan Michael car "
         "bookings. Booking assignment is automatic: schedule availability and car "
-        "preferences never guarantee assignment of a particular car. Report bugs, "
+        "preferences never guarantee assignment of a particular car. Requests act "
+        "as the locally configured `account` (personal or work) unless the caller "
+        "supplies a 4-digit Sidur member code in the `X-Sidur-Member` header (or "
+        "`member_id` in the query or JSON body), which takes precedence. Report bugs, "
         "integration feedback, and discussion at the GitHub issue tracker; do not "
         "include credentials or personal booking data."
     ),
@@ -65,6 +77,7 @@ app = FastAPI(
     lifespan=lifespan,
     dependencies=[Depends(verify_bearer_token)],
 )
+app.add_middleware(MemberQueryScrubber)
 _default_openapi = app.openapi
 
 
@@ -126,6 +139,9 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
 
 
 Credentials = Annotated[CarCredentials, Depends(get_car_credentials)]
+# Endpoints with a JSON body resolve credentials after parsing it, so a
+# body-level member_id can take part in precedence and conflict checks.
+PendingCredentials = Annotated[CredentialRequest, Depends(get_credential_request)]
 IdempotencyKey = Annotated[
     Optional[str],
     Header(
@@ -152,6 +168,20 @@ def _normalized_key(value: Optional[str]) -> Optional[str]:
             message="Idempotency-Key cannot be empty or whitespace.",
         )
     return normalized
+
+
+async def _reject_request_body(request: Request) -> None:
+    """DELETE takes no body; refuse one so a body member_id is never ignored."""
+    body = await request.body()
+    if body:
+        raise APIException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="invalid_member_id" if b"member_id" in body else "invalid_input",
+            message=(
+                "DELETE requests must not have a body; send the member code in the "
+                "X-Sidur-Member header."
+            ),
+        )
 
 
 def _mutation_scope(credentials: CarCredentials, operation: str) -> str:
@@ -228,9 +258,10 @@ async def list_bookings(credentials: Credentials) -> dict[str, Any]:
 )
 async def create_booking(
     body: BookingCreateRequest,
-    credentials: Credentials,
+    pending: PendingCredentials,
     idempotency_key: IdempotencyKey = None,
 ) -> dict[str, Any]:
+    credentials = pending.resolve(body)
     driver_payload = body.model_dump()
     hash_payload = body.model_dump(mode="json")
 
@@ -262,9 +293,10 @@ async def create_booking(
 async def update_booking(
     booking_id: int,
     body: BookingUpdateRequest,
-    credentials: Credentials,
+    pending: PendingCredentials,
     idempotency_key: IdempotencyKey = None,
 ) -> dict[str, Any]:
+    credentials = pending.resolve(body)
     driver_changes = body.model_dump(exclude_unset=True)
     hash_payload = body.model_dump(mode="json", exclude_unset=True)
 
@@ -298,6 +330,7 @@ async def cancel_booking(
     booking_id: int,
     credentials: Credentials,
     idempotency_key: IdempotencyKey = None,
+    _no_body: Annotated[None, Depends(_reject_request_body)] = None,
 ) -> dict[str, Any]:
     async def submit() -> dict[str, Any]:
         return await cars_driver.cancel_booking(credentials, booking_id)
@@ -359,6 +392,7 @@ async def get_available_cars(
 )
 async def estimate_booking_cost(
     body: EstimateCostRequest,
-    credentials: Credentials,
+    pending: PendingCredentials,
 ) -> dict[str, Any]:
+    credentials = pending.resolve(body)
     return await cars_driver.estimate_cost(credentials, body.model_dump())

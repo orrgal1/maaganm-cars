@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from urllib.parse import urlencode
 import httpx
 
 import config
+from idempotency import mark_mutation_started
 from security import APIException, CarCredentials
 from sidur_forms import (
     Booking,
@@ -67,6 +69,14 @@ def _invalid_upstream_response() -> APIException:
     )
 
 
+def _member_capacity() -> APIException:
+    return _api_error(
+        503,
+        "member_capacity",
+        "Too many member sessions are active; retry shortly.",
+    )
+
+
 def _outcome_unknown() -> APIException:
     return _api_error(
         502,
@@ -114,6 +124,7 @@ class _SessionState:
     users: int = 0
     closed: bool = False
     discard: bool = False
+    last_used: float = 0.0
 
 
 @dataclass
@@ -216,6 +227,20 @@ class CarsDriver:
             except Exception:
                 pass
 
+    def _evict_idle_member_locked(self) -> Optional[_SessionState]:
+        """Drop the least recently used idle member session; caller holds the lock."""
+        idle = [
+            (state.last_used, fingerprint)
+            for fingerprint, state in self._sessions.items()
+            if fingerprint[0] == "member" and state.users == 0
+        ]
+        if not idle:
+            return None
+        _, fingerprint = min(idle)
+        state = self._sessions.pop(fingerprint)
+        state.closed = True
+        return state
+
     @asynccontextmanager
     async def _session(
         self, credentials: CarCredentials
@@ -224,15 +249,28 @@ class CarsDriver:
         if not credentials.code:
             raise _api_error(401, "invalid_credentials", "Car credentials are invalid.")
         fingerprint = _credential_fingerprint(credentials)
+        evicted: Optional[_SessionState] = None
         async with self._state_lock:
             if self._closed:
                 raise _upstream_unavailable()
             state = self._sessions.get(fingerprint)
             if state is None:
+                if credentials.account == "member":
+                    members = sum(1 for key in self._sessions if key[0] == "member")
+                    if members >= config.CARS_MAX_MEMBER_SESSIONS:
+                        evicted = self._evict_idle_member_locked()
+                        if evicted is None:
+                            raise _member_capacity()
                 state = self._new_session_state()
                 self._sessions[fingerprint] = state
             state.users += 1
+            state.last_used = time.monotonic()
             state.idle.clear()
+        if evicted is not None:
+            try:
+                await evicted.client.aclose()
+            except Exception:
+                pass
 
         acquired = False
         discard = False
@@ -559,6 +597,7 @@ class CarsDriver:
         path: str,
         controls: Sequence[Tuple[str, str]],
     ) -> _MutationResult:
+        mark_mutation_started()
         encoded = urlencode(list(controls)).encode("utf-8")
         try:
             response = await client.post(

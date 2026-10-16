@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import copy
 import hashlib
 import hmac
@@ -15,6 +16,17 @@ from security import APIException, CarCredentials
 
 T = TypeVar("T")
 _DEFAULT_TTL_SECONDS = 24 * 60 * 60
+# Each keyed operation runs in its own task (and so its own context copy). The
+# driver flips this just before submitting an upstream mutation; failures that
+# happen earlier (capacity, login, form reads) are retryable and never cached.
+_mutation_started: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "idempotency_mutation_started", default=False
+)
+
+
+def mark_mutation_started() -> None:
+    """Record that the current keyed operation is about to mutate upstream."""
+    _mutation_started.set(True)
 
 
 @dataclass(frozen=True)
@@ -134,12 +146,16 @@ class IdempotencyStore:
         request_hash: str,
         operation: Callable[[], Awaitable[T]],
     ) -> _StoredOutcome:
+        _mutation_started.set(False)
         try:
+            cacheable = True
             try:
                 outcome = _StoredOutcome.success(await operation())
             except APIException as exc:
                 outcome = _StoredOutcome.failure(exc)
+                cacheable = _mutation_started.get()
             except Exception:
+                cacheable = _mutation_started.get()
                 outcome = _StoredOutcome.failure(
                     APIException(
                         status_code=502,
@@ -150,8 +166,16 @@ class IdempotencyStore:
                             "resubmitting the mutation."
                         ),
                     )
+                    if cacheable
+                    else APIException(
+                        status_code=502,
+                        code="upstream_error",
+                        message="The upstream booking service request failed.",
+                    )
                 )
 
+            if not cacheable:
+                return outcome
             async with self._lock:
                 self._cache[cache_key] = _CacheEntry(
                     payload_hash=request_hash,

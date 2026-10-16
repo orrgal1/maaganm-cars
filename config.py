@@ -67,6 +67,10 @@ CARS_API_TOKEN = os.getenv("CARS_API_TOKEN", "") or (
 )
 CARS_PERSONAL_CODE = os.getenv("CARS_PERSONAL_CODE", "")
 CARS_WORK_CODE = os.getenv("CARS_WORK_CODE", "")
+# Upper bound on cached upstream sessions for caller-supplied member codes.
+CARS_MAX_MEMBER_SESSIONS = max(
+    1, int(os.getenv("CARS_MAX_MEMBER_SESSIONS", "").strip() or "16")
+)
 
 JWT_SECRET = _load_or_create_jwt_secret()
 JWT_ALGORITHM = "HS256"

@@ -26,6 +26,19 @@ class _RequestModel(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
+def _member_id_field():
+    # Excluded from dumps (driver payloads, idempotency hashes) and from repr.
+    return Field(
+        default=None,
+        exclude=True,
+        repr=False,
+        description=(
+            "Optional 4-digit Sidur member code, equivalent to the X-Sidur-Member "
+            "header and taking precedence over account. Never logged or returned."
+        ),
+    )
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok"] = Field(description="Local API health status.")
     configured_accounts: list[AccountName] = Field(
@@ -140,6 +153,7 @@ class BookingCreateRequest(_RequestModel):
             "allowed values are -1, 0, and 1."
         ),
     )
+    member_id: Optional[str] = _member_id_field()
 
     @model_validator(mode="after")
     def validate_interval(self) -> "BookingCreateRequest":
@@ -182,10 +196,11 @@ class BookingUpdateRequest(_RequestModel):
         default=None,
         description="Replacement automatic-assignment preferences.",
     )
+    member_id: Optional[str] = _member_id_field()
 
     @model_validator(mode="after")
     def validate_changes(self) -> "BookingUpdateRequest":
-        supplied = self.model_fields_set
+        supplied = self.model_fields_set - {"member_id"}
         if not supplied:
             raise ValueError("at least one booking field must be supplied")
         if any(getattr(self, field_name) is None for field_name in supplied):
@@ -249,6 +264,7 @@ class EstimateCostRequest(_RequestModel):
             "When omitted, the most recent usable billed trip is selected."
         ),
     )
+    member_id: Optional[str] = _member_id_field()
 
     @model_validator(mode="after")
     def validate_interval(self) -> "EstimateCostRequest":

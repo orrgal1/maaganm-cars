@@ -25,3 +25,10 @@ logs/
 *.log
 
 .DS_Store
+
+# Durable command-bus state and SQLite sidecars
+.command_bus.sqlite3*
+.api_token
+.discovery_secret
+.discovery.sqlite3*
+.runtime/

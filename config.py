@@ -61,7 +61,10 @@ def _load_or_create_jwt_secret() -> str:
 CARS_BASE_URL = os.getenv(
     "CARS_BASE_URL", "https://sidur.maaganm.co.il"
 ).rstrip("/")
-CARS_API_TOKEN = os.getenv("CARS_API_TOKEN", "")
+CARS_API_TOKEN = os.getenv("CARS_API_TOKEN", "") or (
+    (_PROJECT_DIR / ".api_token").read_text(encoding="utf-8").strip()
+    if (_PROJECT_DIR / ".api_token").exists() else ""
+)
 CARS_PERSONAL_CODE = os.getenv("CARS_PERSONAL_CODE", "")
 CARS_WORK_CODE = os.getenv("CARS_WORK_CODE", "")
 
@@ -71,3 +74,25 @@ JWT_ALGORITHM = "HS256"
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8002"))
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "30.0"))
+
+# Mail-bus identities have no built-in defaults; set them in .env.local.
+GMAIL_COMMAND_ALIAS = os.getenv("GMAIL_COMMAND_ALIAS", "").strip()
+GMAIL_ALLOWED_SENDER = os.getenv("GMAIL_ALLOWED_SENDER", "").strip()
+GMAIL_RESULT_RECIPIENT = os.getenv("GMAIL_RESULT_RECIPIENT", "").strip()
+GMAIL_HMAC_SECRET = os.getenv("GMAIL_HMAC_SECRET", "").strip()
+GMAIL_STATE_DB_PATH = Path(
+    os.getenv("GMAIL_STATE_DB_PATH", "").strip()
+    or str(_PROJECT_DIR / ".command_bus.sqlite3")
+)
+GMAIL_PROCESSED_LABEL = (
+    os.getenv("GMAIL_PROCESSED_LABEL", "").strip() or "Agents"
+)
+GMAIL_POLL_INTERVAL = float(
+    os.getenv("GMAIL_POLL_INTERVAL", "").strip() or "30.0"
+)
+GAPI_EXECUTABLE = os.getenv("GAPI_EXECUTABLE", "").strip() or "gapi"
+GAPI_TIMEOUT = float(os.getenv("GAPI_TIMEOUT", "").strip() or "30.0")
+GMAIL_CREDENTIALS_FILE = Path(
+    os.getenv("GMAIL_CREDENTIALS_FILE", "").strip()
+    or "~/.hermes/google_token.json"
+)

@@ -44,6 +44,7 @@ _ERROR_RESPONSES = {
     404: {"model": ErrorResponse, "description": "The requested booking was not found."},
     409: {"model": ErrorResponse, "description": "Request conflict or historical tariff unavailable."},
     502: {"model": ErrorResponse, "description": "The upstream booking service failed safely."},
+    503: {"model": ErrorResponse, "description": "The selected account has no local Cars code configured."},
 }
 
 app = FastAPI(
@@ -163,8 +164,9 @@ def _mutation_scope(credentials: CarCredentials, operation: str) -> str:
     operation_id="getHealth",
     summary="Check authenticated API health",
     description=(
-        "Confirms that the local service is running and lists configured account names. "
-        "It does not contact or mutate the upstream service and never reveals car codes."
+        "Confirms that the local service is running and lists accounts with local "
+        "Cars codes configured. It does not contact or mutate the upstream service "
+        "and never reveals car codes."
     ),
     responses={401: _ERROR_RESPONSES[401]},
     tags=["service"],

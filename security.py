@@ -1,14 +1,14 @@
-import hmac
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Literal, Optional
 
 import jwt
-from fastapi import Header, Query, Request, Security, status
+from fastapi import Query, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
 
 import config
+from local_api_core.auth import verify_bearer_token as verify_static_bearer
 
 
 _JWT_ISSUER = "maaganm-cars"
@@ -80,9 +80,7 @@ async def verify_bearer_token(
             message="Authorization header must start with Bearer",
         )
 
-    if config.CARS_API_TOKEN and hmac.compare_digest(
-        token.encode("utf-8"), config.CARS_API_TOKEN.encode("utf-8")
-    ):
+    if verify_static_bearer(authorization, config.CARS_API_TOKEN):
         return {"sub": "static-token"}
 
     try:
@@ -110,24 +108,17 @@ async def verify_bearer_token(
 async def get_car_credentials(
     request: Request,
     account: Literal["personal", "work"] = Query("personal"),
-    x_cars_code: Optional[str] = Header(None, alias="X-Cars-Code"),
 ) -> CarCredentials:
-    """Resolve a dynamic cars code or the configured code for the account."""
+    """Resolve the selected account's locally configured Cars code."""
     del request
-    configured_code = (
-        config.CARS_PERSONAL_CODE
-        if account == "personal"
-        else config.CARS_WORK_CODE
-    )
-    code = x_cars_code if x_cars_code is not None else configured_code
-    if not code or not code.strip():
+    code = (
+        config.CARS_PERSONAL_CODE if account == "personal" else config.CARS_WORK_CODE
+    ).strip()
+    if not code:
         raise APIException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             code="credentials_missing",
-            message=(
-                "Cars credentials not provided. Pass the X-Cars-Code header or "
-                "configure the selected account code"
-            ),
+            message=f"Cars credentials are not configured for the {account} account.",
         )
 
-    return CarCredentials(account=account, code=code.strip())
+    return CarCredentials(account=account, code=code)

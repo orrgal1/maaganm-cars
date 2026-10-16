@@ -29,7 +29,7 @@ class _RequestModel(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"] = Field(description="Local API health status.")
     configured_accounts: list[AccountName] = Field(
-        description="Account names with a configured upstream code. Codes are never returned."
+        description="Accounts with upstream Cars codes configured locally on this service."
     )
 
 
